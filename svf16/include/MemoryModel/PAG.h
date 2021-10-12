@@ -43,6 +43,7 @@ class PAG : public GenericGraph<PAGNode,PAGEdge> {
 
 public:
     typedef std::set<llvm::CallSite> CallSiteSet;
+    typedef std::set<llvm::Function*> FunctionSet;      //Hamed
     typedef std::map<llvm::CallSite,NodeID> CallSiteToFunPtrMap;
     typedef std::map<NodeID,CallSiteSet> FunPtrToCallSitesMap;
     typedef llvm::DenseMap<NodeID,NodeBS> MemObjToFieldsMap;
@@ -64,6 +65,7 @@ public:
     typedef llvm::DenseMap<NodeOffset,NodeID,llvm::DenseMapInfo<std::pair<NodeID,Size_t> > > NodeOffsetMap;
     typedef std::map<NodeLocationSet,NodeID> NodeLocationSetMap;
     typedef std::map<NodePair,NodeID> NodePairSetMap;
+    typedef std::map<const llvm::Function*, FunctionSet> FunctionAssignmentToFunctionMap; //Hamed
 
 private:
     SymbolTableInfo* symInfo;
@@ -87,6 +89,9 @@ private:
     bool fromFile; ///< Whether the PAG is built according to user specified data from a txt file
     const llvm::BasicBlock* curBB;	///< Current basic block during PAG construction when visiting the module
     const llvm::Value* curVal;	///< Current Value during PAG construction when visiting the module
+
+    /// Hamed: 
+    FunctionAssignmentToFunctionMap funAssignmentMap;	///< Map a function to functions where it's assigned as a function pointer
 
     /// Valid pointers for pointer analysis resolution connected by PAG edges (constraints)
     /// this set of candidate pointers can change during pointer resolution (e.g. adding new object nodes)
@@ -138,6 +143,17 @@ public:
     /// Destructor
     virtual ~PAG() {
         destroy();
+    }
+
+    /// Hamed: return funAssignmentMap
+    inline FunctionAssignmentToFunctionMap& getFunAssignmentMap() {
+        return funAssignmentMap;
+    }
+
+    inline void addToFuncAssignmentMap(const llvm::Function *targetFunc, llvm::Function *caller) {
+        assert(targetFunc && "targetFunc should not be NULL");
+        funAssignmentMap[targetFunc].insert(caller);
+        return;
     }
 
     /// Whether this PAG built from a txt file

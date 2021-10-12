@@ -64,6 +64,7 @@ void PathCondAllocator::allocate(const SVFModule M) {
             // Allocate conditions for a program.
             for (Function::const_iterator bit = func->begin(), ebit = func->end(); bit != ebit; ++bit) {
                 const BasicBlock & bb = *bit;
+                basicBlockToId[&bb] = bbCount++;
                 collectBBCallingProgExit(bb);
                 allocateForBB(bb);
             }
@@ -476,8 +477,68 @@ void PathCondAllocator::printPathCond() {
             const TerminatorInst *Term = bb->getTerminator();
             const BasicBlock* succ = Term->getSuccessor(cit->first);
             Condition* cond = cit->second;
-            outs() << bb->getName() << "-->" << succ->getName() << ":";
+            if ( bb->getName() != "" && succ->getName() != "" )
+                outs() << bb->getName() << "-->" << succ->getName() << ":";
+            else
+                outs() << basicBlockToId[bb] << "-->" << basicBlockToId[succ] << ":";
+            outs() << " condition inst: " << (Value *)condToInstMap[cond] << ":";
             outs() << dumpCond(cond) << "\n";
         }
     }
 }
+
+/*
+ * Hamed: PathCondAllocator fill maps
+ */
+void PathCondAllocator::fillMaps() {
+    int i = 0;
+    for(BBCondMap::iterator it = bbConds.begin(), eit = bbConds.end(); it!=eit; ++it) {
+        const BasicBlock* bb = it->first;
+        if ( funcToPD.find(bb->getParent()) == funcToPD.end() )
+            funcToPD[bb->getParent()] = getPostDT(bb->getParent());
+        i = 0;
+        Condition *trueCond;
+        for(CondPosMap::iterator cit = it->second.begin(), ecit = it->second.end(); cit!=ecit; ++cit) {
+            const TerminatorInst *Term = bb->getTerminator();
+            BasicBlock* succ = Term->getSuccessor(cit->first);
+            Condition* cond = cit->second;
+            if ( i == 0 ){
+                bbToCond[succ] = cond;
+                condToTrueBB[cond] = succ;
+                trueCond = cond;
+                i = 1;
+            }else{
+                if ( trueCond != NULL )
+                    condToFalseBB[trueCond] = succ;
+                //falseBB->insert(succ);
+                //i = 0;
+            }
+        }
+    }
+}
+
+bool PathCondAllocator::isTrueBranchTarget(llvm::BasicBlock *bb){
+    return bbToCond.find(bb) != bbToCond.end();
+}
+
+bool PathCondAllocator::isConditionExitNode(llvm::BasicBlock *bb, Condition *cond){
+    const llvm::BasicBlock *trueBB, *falseBB;
+    PostDominatorTree* postDT = funcToPD[bb->getParent()];
+    trueBB = condToTrueBB[cond];
+    falseBB = condToFalseBB[cond];
+    bool result = (bb == falseBB) || (postDT->dominates(bb, trueBB) && postDT->dominates(bb, falseBB));
+    if ( result ){
+//        if ( bb->getName() != "" )
+//            outs() << "bb->getName(): " << bb->getName() << " trueBB->getName(): " << trueBB->getName() << " falseBB->getName(): " << falseBB->getName() << "\n";
+//        else
+//            outs() << "bb->getId(): " << basicBlockToId[bb] << " trueBB->getId(): " << basicBlockToId[trueBB] << " falseBB->getId(): " << basicBlockToId[falseBB] << "\n";
+    }
+    return result;
+    //return (postDT->dominates(bb, trueBB) && postDT->dominates(bb, falseBB));
+}
+
+PathCondAllocator::Condition* PathCondAllocator::getConditionForBB(llvm::BasicBlock *bb){
+    return bbToCond[bb];
+}
+
+

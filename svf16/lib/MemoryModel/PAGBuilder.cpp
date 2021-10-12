@@ -41,12 +41,15 @@ using namespace llvm;
 using namespace std;
 using namespace analysisUtil;
 
+static cl::opt<bool> HandleGlobalVar("handle-global-var", cl::init(true),
+                                    cl::desc("Handle Function pointers in global variables"));
 
 /*!
  * Start building PAG here
  */
 PAG* PAGBuilder::build(SVFModule svfModule) {
     svfMod = svfModule;
+
     /// initial external library information
     /// initial PAG nodes
     initalNode();
@@ -85,20 +88,115 @@ PAG* PAGBuilder::build(SVFModule svfModule) {
         }
         for (llvm::Function::iterator bit = fun.begin(), ebit = fun.end();
                 bit != ebit; ++bit) {
+            // We need to skip processing the pool alloc functions even though
+            // they are defined within the module
+            if (analysisUtil::isTreatAsExtCall(&fun))
+                continue;
             llvm::BasicBlock& bb = *bit;
+
             for (llvm::BasicBlock::iterator it = bb.begin(), eit = bb.end();
                     it != eit; ++it) {
                 llvm::Instruction& inst = *it;
+                llvm::Instruction *tmpInst = &*it;
                 pag->setCurrentLocation(&inst,&bb);
                 visit(inst);
+
+                // Hamed: If StoreInst check and keep track if function is being assigned to FP
+                if ( isa<StoreInst>(inst) && isFunctionAssignment(tmpInst) ){
+                    addFunctionPointerAssignment(&fun, tmpInst);
+                }
+
+                if (HandleGlobalVar) {
+                    // If a globalvariable that has a function pointer is
+                    // accessed, then add all of the functions that it can point
+                    // to.
+                    //
+                    // Very coarse grained right now
+                    // First handle the geps
+                    if (GetElementPtrInst* gepInst = dyn_cast<GetElementPtrInst>(tmpInst)) {
+                        Value* gepPtrOperand = gepInst->getPointerOperand();
+                        if (GlobalVariable* gVar = dyn_cast<GlobalVariable>(gepPtrOperand)) {
+                            for (Function* targetFunc: globalVarToFuncMap[gVar]) {
+                                errs() << fun.getName() << "->" << targetFunc->getName() << "\n";
+                                pag->addToFuncAssignmentMap(targetFunc, &fun); 
+                            }
+                        }
+                    }
+                    // Then the store inst where the address of the globalvariable
+                    // is stored somewhere
+                    if (StoreInst* stInst = dyn_cast<StoreInst>(tmpInst)) {
+                        if (GlobalVariable* gVar = dyn_cast<GlobalVariable>(stInst->getValueOperand())) {
+                            for (Function* targetFunc: globalVarToFuncMap[gVar]) {
+                                errs() << fun.getName() << "->" << targetFunc->getName() << "\n";
+                                pag->addToFuncAssignmentMap(targetFunc, &fun); 
+                            }
+                        }
+                    }
+                }
+
+                if (isCallSite(tmpInst) && isInstrinsicDbgInst(tmpInst)==false) {
+
+                    llvm::CallSite cs = analysisUtil::getLLVMCallSite(tmpInst);
+                    for (llvm::CallSite::arg_iterator it = cs.arg_begin();
+                        it != cs.arg_end(); ++it) {
+                        const Value *arg = *it;
+                        if ( isa<llvm::Function>(arg) ){
+                            //outs() << "Function being passed as FP: " << arg->getName() << " in function: " << fun.getName() << "\n";
+                            pag->addToFuncAssignmentMap(dyn_cast<llvm::Function>(arg), &fun);
+                        }
+                    }
+                    // Calls to inline asm need to be added as well because the callee isn't
+                    // referenced anywhere else.
+                    //const Value *callee = cs.getCalledValue();
+                    //if ( isa<llvm::Function>(callee) ){
+                    //    outs() << fun.getName() << "-> " << callee->getName() << "\n";
+                    //}
+                }
             }
         }
     }
+
+    outs() << "Hamed: Finished PAG initialization...\n";
+    outs().flush();
     sanityCheck();
 
     pag->initialiseCandidatePointers();
 
     return pag;
+}
+
+
+/*!
+ * Hamed: Visit store instruction and add to FP assignment map, if function is being assigned as FP
+ */
+bool PAGBuilder::isFunctionAssignment(llvm::Instruction *inst) {
+    // StoreInst itself should always not be a pointer type
+    llvm::StoreInst *st = dyn_cast<llvm::StoreInst>(inst);
+    assert(!isa<PointerType>(st->getType()));
+    if (isa<PointerType>(st->getValueOperand()->getType()) && isa<llvm::Function>(st->getValueOperand())) 
+        return true;
+    return false;
+}
+
+/*!
+ * Hamed: Visit store instruction and add to FP assignment map, if function is being assigned as FP
+ */
+void PAGBuilder::addFunctionPointerAssignment(llvm::Function *fun, Instruction *inst) {
+    // StoreInst itself should always not be a pointer type
+    llvm::StoreInst *st = dyn_cast<llvm::StoreInst>(inst);
+    assert(!isa<PointerType>(st->getType()));
+    //outs() << "Entered addFunctionPointerAssignment\n";
+    if (isa<PointerType>(st->getValueOperand()->getType()) && isa<llvm::Function>(st->getValueOperand()) ) {
+
+        DBOUT(DPAGBuild, outs() << "process FP assignment (store) " << inst << " \n");
+        //outs() << "process FP assignment (store): " << inst << "\n";
+        NodeID srcId = getObjectNode(st->getValueOperand());
+        if ( srcId && pag->getObject(srcId) && pag->getObject(srcId)->isFunction() ){
+            //outs() << "operand is a function\n";
+            const llvm::Function *targetFunc = dyn_cast<llvm::Function>(pag->getObject(srcId)->getRefVal());
+            pag->addToFuncAssignmentMap(targetFunc, fun);
+        }
+    }
 }
 
 /*
@@ -298,11 +396,32 @@ void PAGBuilder::InitialGlobal(const GlobalVariable *gvar, Constant *C,
     }
 }
 
+void PAGBuilder::findAllFunctions(Value* value, std::vector<Function*>& functions, std::set<Value*>& checkedGlobals) {
+    if (std::find(checkedGlobals.begin(), checkedGlobals.end(), value) != checkedGlobals.end())
+        return; // we've already processed this in this iteration
+    checkedGlobals.insert(value);
+    /*
+    if (!isa<Function>(value)) {
+        errs() << "Checking for : " << value << "\n";
+    }
+    */
+    if (Function* func = dyn_cast<Function>(value)) {
+        functions.push_back(func);
+    }
+    if (User* userValue = dyn_cast<User>(value)) {
+        for (int i = 0; i < userValue->getNumOperands(); i++) {
+            Value* subValue = userValue->getOperand(i);
+            findAllFunctions(subValue, functions, checkedGlobals);
+        }
+    }
+}
+
 /*!
  *  Visit global variables for building PAG
  */
 void PAGBuilder::visitGlobal(SVFModule svfModule) {
 
+    std::set<Value*> checkedGlobals;
     /// initialize global variable
     for (SVFModule::global_iterator I = svfModule.global_begin(), E =
                 svfModule.global_end(); I != E; ++I) {
@@ -317,6 +436,16 @@ void PAGBuilder::visitGlobal(SVFModule svfModule) {
             Constant *C = gvar->getInitializer();
             DBOUT(DPAGBuild, outs() << "add global var node " << *gvar << "\n");
             InitialGlobal(gvar, C, 0);
+        }
+
+        if (gvar->hasInitializer()) {
+            Constant *C = gvar->getInitializer();
+            std::vector<Function*> functions;
+            checkedGlobals.clear();
+            findAllFunctions(C, functions, checkedGlobals);
+            for (Function* func: functions) {
+                globalVarToFuncMap[gvar].push_back(func);
+            }
         }
     }
 
@@ -853,6 +982,7 @@ void PAGBuilder::handleExtCall(CallSite cs, const Function *callee) {
                 break;
             }
             case ExtAPI::EFT_ALLOC:
+            case ExtAPI::EFT_POOL_ALLOC:
             case ExtAPI::EFT_NOSTRUCT_ALLOC:
             case ExtAPI::EFT_STAT:
             case ExtAPI::EFT_STAT2:

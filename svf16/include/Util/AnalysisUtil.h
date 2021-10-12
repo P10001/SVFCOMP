@@ -105,8 +105,17 @@ inline bool isExtCall(const llvm::Function* fun) {
     return fun && ExtAPI::getExtAPI()->is_ext(fun);
 }
 
+inline bool isTreatAsExtCall(const llvm::Function* fun) {
+    return fun && ExtAPI::getExtAPI()->is_treat_as_ext(fun);
+}
+
+
 inline bool isExtCall(const llvm::CallSite cs) {
     return isExtCall(getCallee(cs));
+}
+
+inline bool isTreatAsExtCall(const llvm::CallSite cs) {
+    return isTreatAsExtCall(getCallee(cs));
 }
 
 inline bool isExtCall(const llvm::Instruction *inst) {

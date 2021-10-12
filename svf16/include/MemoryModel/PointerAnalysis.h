@@ -322,6 +322,37 @@ public:
             return cs.arg_size() == callee->arg_size();
     }
 
+    /// Hamed: Match argument types for callsite at caller and callee
+    inline bool matchArgTypes(llvm::CallSite cs, const llvm::Function* callee) {
+        if ( callee->getFunctionType()->isVarArg() )
+            return true;
+        unsigned argIndex = 0;
+        for (llvm::Function::const_arg_iterator I = callee->arg_begin(), E = callee->arg_end();
+                I != E; ++I) {
+            const llvm::Value *csArg = cs.getArgument(argIndex);
+            const llvm::Value *funcArg = I;
+            /*previous implementation
+            if ( csArg->getType() != funcArg->getType() )
+                return false;
+            */
+            llvm::Type* csType = csArg->getType();
+            llvm::Type* funcType = funcArg->getType();
+            while (csType->isPointerTy()) {
+                csType = csType->getPointerElementType();
+            }
+            while (funcType->isPointerTy()) {
+                funcType = funcType->getPointerElementType();
+            }
+            if (llvm::StructType* funcStTy = llvm::dyn_cast<llvm::StructType>(funcType)) {
+                llvm::StructType* csStTy = llvm::dyn_cast<llvm::StructType>(csType);
+                if ( !csStTy || csStTy != funcStTy )
+                    return false;
+            }
+            argIndex++;
+        }
+        return true;
+    }
+
     /// CallGraph SCC related methods
     //@{
     /// CallGraph SCC detection

@@ -34,6 +34,7 @@
 #include "Util/Conditions.h"
 #include "Util/WorkList.h"
 #include "Util/DataFlowUtil.h"
+#include <llvm/Analysis/PostDominators.h>
 
 /**
  * PathCondAllocator allocates conditions for each basic block of a certain CFG.
@@ -52,8 +53,15 @@ public:
     typedef std::map<const llvm::BasicBlock*, Condition*> BBToCondMap;	///< map a basic block to its condition during control-flow guard computation
     typedef FIFOWorkList<const llvm::BasicBlock*> CFWorkList;	///< worklist for control-flow guard computation
 
+    ///Hamed: map BB to index
+    typedef std::map<const llvm::BasicBlock*, int> BBToId;
+    ///Hamed: map Condition to true/false BB
+    typedef std::map<Condition*, const llvm::BasicBlock*> CondToBB;
+    ///Hamed: map function to post dominance tree
+    typedef std::map<const llvm::Function*,  llvm::PostDominatorTree*> FuncToPostDominanceMap;  
+
     /// Constructor
-    PathCondAllocator() {
+    PathCondAllocator(): bbCount(0) {
         getBddCondManager();
     }
     /// Destructor
@@ -66,6 +74,10 @@ public:
 
     static inline Condition* falseCond() {
         return getBddCondManager()->getFalseCond();
+    }
+
+    inline int getBBId(llvm::BasicBlock *bb) {
+        return basicBlockToId[bb];
     }
 
     /// Statistics
@@ -170,6 +182,14 @@ public:
     /// Print out the path condition information
     void printPathCond();
 
+    /// Hamed: fill maps
+    //void fillMaps( std::map<llvm::BasicBlock*,PathCondAllocator::Condition*> *bbToC, std::set<llvm::BasicBlock*> *falseBB);
+    void fillMaps(void);
+
+    bool isTrueBranchTarget(llvm::BasicBlock *bb);
+    bool isConditionExitNode(llvm::BasicBlock *bb, Condition *cond);
+    Condition* getConditionForBB(llvm::BasicBlock *bb);
+
 private:
 
     /// Allocate path condition for every basic block
@@ -261,6 +281,12 @@ private:
     BBToCondMap bbToCondMap;				///< map a basic block to its path condition starting from root
     const llvm::Value* curEvalVal;			///< current llvm value to evaluate branch condition when computing guards
 
+    ///Hamed:
+    BBToId basicBlockToId;
+    BBToCondMap bbToCond;
+    CondToBB condToTrueBB, condToFalseBB;
+    FuncToPostDominanceMap funcToPD;
+    int bbCount;
 protected:
     static BddCondManager* bddCondMgr;		///< bbd manager
     BBCondMap bbConds;						///< map basic block to its successors/predecessors branch conditions

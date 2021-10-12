@@ -35,7 +35,7 @@
 
 #include <llvm/IR/InstVisitor.h>	// for instruction visitor
 
-
+#include <set>
 class SVFModule;
 /*!
  *  PAG Builder
@@ -44,6 +44,9 @@ class PAGBuilder: public llvm::InstVisitor<PAGBuilder> {
 private:
     PAG* pag;
     SVFModule svfMod;
+    
+    std::map<llvm::GlobalVariable*, std::vector<llvm::Function*>> globalVarToFuncMap;
+
 public:
     /// Constructor
     PAGBuilder(): pag(PAG::getPAG()) {
@@ -123,6 +126,10 @@ public:
     const llvm::Type *getBaseTypeAndFlattenedFields(llvm::Value* v, std::vector<LocationSet> &fields);
     void addComplexConsForExt(llvm::Value *D, llvm::Value *S,u32_t sz = 0);
     //@}
+    
+    /// Hamed: Functions for keeping track of functions assigned as FPs
+    bool isFunctionAssignment(llvm::Instruction *I); 
+    void addFunctionPointerAssignment(llvm::Function *fun, llvm::Instruction *I);
 
     /// Our visit overrides.
     //@{
@@ -189,6 +196,8 @@ public:
         // TODO: ignore here:
     }
     //}@
+
+    void findAllFunctions(llvm::Value*, std::vector<llvm::Function*>&, std::set<llvm::Value*>&);
 };
 
 /*!

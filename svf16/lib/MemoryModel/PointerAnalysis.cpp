@@ -39,6 +39,9 @@
 #include "MemoryModel/PTAType.h"
 #include <fstream>
 #include <sstream>
+#include <string>
+#include <cstddef>
+#include <algorithm>
 
 using namespace llvm;
 using namespace analysisUtil;
@@ -639,8 +642,68 @@ void PointerAnalysis::resolveIndCalls(CallSite cs, const PointsTo& target, CallE
 
                 /// if the arg size does not match then we do not need to connect this parameter
                 /// even if the callee is a variadic function (the first parameter of variadic function is its paramter number)
-                if(matchArgs(cs, callee) == false)
+                //if(matchArgs(cs, callee) == false || matchArgTypes(cs, callee) == false )
+                //    continue;
+                if(matchArgs(cs, callee) == false )
                     continue;
+
+                bool argMatch = true;
+                if ( !callee->getFunctionType()->isVarArg() ){
+
+                    unsigned argIndex = 0;
+                    for (llvm::Function::const_arg_iterator I = callee->arg_begin(), E = callee->arg_end();
+                            I != E; ++I) {
+                        const llvm::Value *csArg = cs.getArgument(argIndex);
+                        const llvm::Value *funcArg = I;
+                        /*previous implementation
+                        if ( csArg->getType() != funcArg->getType() )
+                            return false;
+                        */
+                        llvm::Type* csType = csArg->getType();
+                        llvm::Type* funcType = funcArg->getType();
+                        while (csType->isPointerTy()) {
+                            csType = csType->getPointerElementType();
+                        }
+                        while (funcType->isPointerTy()) {
+                            funcType = funcType->getPointerElementType();
+                        }
+                        if (llvm::StructType* funcStTy = llvm::dyn_cast<llvm::StructType>(funcType)) {
+                            llvm::StructType* csStTy = llvm::dyn_cast<llvm::StructType>(csType);
+                            if ( !csStTy || !csStTy->isLayoutIdentical(funcStTy) ){
+                                //outs() << "setting arg type match to false for: func name: " << callee->getName() << "\n";
+                                //outs() << "funcStTy->getName(): " << funcStTy->getName() << "\n";
+                                if ( !csStTy ){
+                                    argMatch = false;
+                                    break;
+                                }else{
+                                    std::string csStName = csStTy->getName();
+                                    std::string funcStName = funcStTy->getName();
+                                    size_t csStDotCount = std::count(csStName.begin(), csStName.end(), '.');
+                                    size_t funcStDotCount = std::count(funcStName.begin(), funcStName.end(), '.');
+                                    if ( csStDotCount == 2 )
+                                        csStName = csStName.substr(0, csStName.find_last_of("."));
+                                    if ( funcStDotCount == 2 )
+                                        funcStName = funcStName.substr(0, funcStName.find_last_of("."));
+                                    if ( callee->getName() == "ap_unixd_accept" ){
+                                        outs() << "funcStTy->getName(): " << funcStName << "\n";
+                                        outs() << "csStTy->getName(): " << csStName << "\n";
+                                    }
+                                    if ( csStName.compare(funcStName) != 0 ){
+                                        if ( callee->getName() == "ap_unixd_accept" )
+                                            outs() << "Removing " << callee->getName() << "\n";
+                                        argMatch = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        argIndex++;
+                    }
+                }
+
+                if ( !argMatch )
+                    continue;
+
 
                 if(0 == getIndCallMap()[cs].count(callee)) {
                     newEdges[cs].insert(callee);

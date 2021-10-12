@@ -25,6 +25,7 @@ set(SOURCES
     MemoryModel/PAG.cpp
     MemoryModel/CHA.cpp
     MemoryModel/PointerAnalysis.cpp
+    MemoryModel/SimpleAnalysis.cpp
     MSSA/MemPartition.cpp
     MSSA/MemRegion.cpp
     MSSA/MemSSA.cpp
@@ -49,6 +50,7 @@ set(SOURCES
     WPA/FlowSensitive.cpp
     WPA/FlowSensitiveStat.cpp
     WPA/TypeAnalysis.cpp
+    WPA/SPAPass.cpp
     WPA/WPAPass.cpp)
 
 add_llvm_loadable_module(Svf ${SOURCES})

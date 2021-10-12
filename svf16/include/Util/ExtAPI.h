@@ -50,6 +50,8 @@ public:
         EFT_REALLOC,      //like L_A0 if arg0 is a non-null ptr, else ALLOC
         EFT_FREE,      	//free memory arg0 and all pointers passing into free function
         EFT_NOSTRUCT_ALLOC, //like ALLOC but only allocates non-struct data
+        EFT_POOL_ALLOC, // accepts a pointer to a pool, size of memory to allocate from that pool
+                        //returns a pointer to the object on that pool
         EFT_STAT,         //retval points to an unknown static var X
         EFT_STAT2,        //ret -> X -> Y (X, Y - external static vars)
         EFT_L_A0,         //copies arg0, arg1, or arg2 into LHS
@@ -118,7 +120,7 @@ public:
             funName = "llvm." + F->getName().split('.').second.split('.').first.str();
         }
         llvm::StringMap<extf_t>::const_iterator it= info.find(funName);
-        if(it == info.end() || !F->isDeclaration())
+        if(it == info.end() || (!F->isDeclaration() && it->second != EFT_POOL_ALLOC))
             return EFT_OTHER;
         else
             return it->second;
@@ -136,7 +138,7 @@ public:
     //Does (F) allocate a new object and return it?
     bool is_alloc(const llvm::Function *F) const {
         extf_t t= get_type(F);
-        return t==EFT_ALLOC || t==EFT_NOSTRUCT_ALLOC;
+        return t==EFT_ALLOC || t==EFT_NOSTRUCT_ALLOC || t == EFT_POOL_ALLOC;
     }
     //Does (F) allocate a new object and assign it to one of its arguments?
     bool is_arg_alloc(const llvm::Function *F) const {
@@ -181,6 +183,21 @@ public:
         extf_t t= get_type(F);
         return t==EFT_REALLOC;
     }
+
+    bool is_treat_as_ext(const llvm::Function *F) {
+        llvm::StringMap<extf_t>::const_iterator it= info.find(F->getName());
+        if(it == info.end())
+            return false;
+        else {
+            extf_t t = it->second;
+            if (t == EFT_POOL_ALLOC)
+                return true;
+            else
+                return false;
+        }
+        return false;
+    }
+
     //Should (F) be considered "external" (either not defined in the program
     //  or a user-defined version of a known alloc or no-op)?
     bool is_ext(const llvm::Function *F) {
@@ -195,7 +212,10 @@ public:
             res= 1;
         } else {
             extf_t t= get_type(F);
-            res= t==EFT_ALLOC || t==EFT_REALLOC || t==EFT_NOSTRUCT_ALLOC
+            res= t==EFT_ALLOC || t==EFT_REALLOC || t==EFT_NOSTRUCT_ALLOC || t == EFT_POOL_ALLOC
+                 /* treat all pool alloc calls as external, even if they're in
+                  * the library being analyzed 
+                  */
                  || t==EFT_NOOP || t==EFT_FREE;
         }
         isext_cache[F]= res;
